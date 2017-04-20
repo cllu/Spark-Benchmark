@@ -1,0 +1,105 @@
+group 'me.cllu.benchmark'
+version '1.0-SNAPSHOT'
+
+apply plugin: 'java'
+sourceCompatibility = 1.8
+apply plugin: 'scala'
+compileScala.options.encoding = 'UTF-8'
+
+repositories {
+    mavenCentral()
+}
+
+ext {
+    versions = [:]
+    libs = [:]
+}
+
+versions += [
+        scala: "2.11",
+        spark: "2.0.2",
+]
+
+libs += [
+        spark: "org.apache.spark:spark-core_$versions.scala:$versions.spark",
+
+        json: "org.json:json:20160810",
+        junit: "junit:junit:4.11",
+]
+
+configurations { providedCompile }
+
+dependencies {
+    compile([
+            libs.spark,
+            libs.json,
+    ])
+
+    providedCompile([
+            libs.spark
+    ])
+
+    testCompile([
+            libs.junit
+    ])
+}
+
+// Create a fatjar(all dependencies included) for use in hadoop jobs
+task hadoopJar(type: Jar, dependsOn: jar) {
+    from {
+        configurations.runtime.collect {
+            it.isDirectory() ? it : zipTree(it)
+        }
+    }
+    exclude 'META-INF/*.RSA', 'META-INF/*.SF','META-INF/*.DSA'
+    from sourceSets.main.output
+    classifier "hadoop"
+    extension "jar"
+}
+
+hadoopJar.onlyIf { !project.hasProperty('skipHadoopJar') }
+
+task runSpark(dependsOn: 'hadoopJar', type: JavaExec) {
+    classpath = files(hadoopJar.archivePath, configurations.providedCompile)
+    maxHeapSize = "2048m"
+
+    // Set main class
+    if (project.hasProperty('sparkMain')) {
+        main = sparkMain
+    }
+    // Set args
+    if (project.hasProperty('sparkArgs')) {
+        args(sparkArgs.split(' '))
+    }
+}
+
+// ./gradlew runMain -PmainClass=com.path.mainClass -Parguments="arg1 arg2"
+task runMain(type:JavaExec) {
+    // set classpath
+    classpath = sourceSets.main.runtimeClasspath
+    // set mainClass
+    if(project.hasProperty('mainClass')){
+        main = mainClass
+    }
+    // set arguments
+    if(project.hasProperty('arguments')){
+        args(arguments.split("\\s+"))
+    }
+
+    // user jvm arguments
+    if(project.hasProperty('jvmargs')){
+        List<String> list = Arrays.asList(jvmargs.split("\\s+"))
+        jvmArgs(list)
+    }
+    else{
+        List<String> defaults = new ArrayList<>();
+        defaults.add("-Xmx24G")
+        defaults.add("-Xms24G")
+        jvmArgs(defaults)
+    }
+
+    // if no compile argument, then skip all other dependencies
+    if(project.hasProperty('nocompile')){
+        gradle.startParameter.excludedTaskNames.addAll(["compileScala","compileJava","processResources","jar","classes"])
+    }
+}
